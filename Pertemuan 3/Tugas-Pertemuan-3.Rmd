@@ -1,0 +1,250 @@
+---
+title: "Tugas Pertemuan 3 MPDW"
+author: "Yasmin Aufaahani Abdullah-M0401241129"
+date: "2026-09-09"
+output:
+  html_document:
+    theme: lumen
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    code_folding: hide
+  pdf_document: default
+  word_document: default
+---
+```{r}
+library(dLagM)
+library(dynlm)
+library(MLmetrics)
+library(lmtest)
+library(car) 
+```
+# INPUT DATA 
+```{r}
+data <- read.csv("C://Users//User//Downloads//NewDelhi_Air_quality.csv", sep = ";")
+data 
+```
+```{r}
+fix_number <- function(x){
+  as.numeric(gsub("\\.", "",x))/1e6
+}
+
+data <- data.frame(
+  datetime=as.POSIXct(data$datetime,format="%Y-%m-%d:%H", tz="UTC"),
+  AQI = as.numeric(data$AQI),
+  CO = fix_number(data$CO),
+  NO2= as.numeric(data$no2),
+  O3 = fix_number(data$o3),
+  PM10 = fix_number(data$pm10),
+  PM25= fix_number(data$pm25),
+  SO2=as.numeric(data$so2)
+) 
+```
+
+```{r}
+#mengurutkan data berdasarkan waktu 
+data <- data[order(data$datetime), ]
+data<- na.omit (data)
+str(data)
+```
+```{r}
+# Variabel x dan Y 
+model_data <- data.frame(Yt = data$AQI, Xt=data$PM25)
+```
+# Bagi Data Trining & Testing 
+```{r}
+n <-nrow(model_data)
+train_n<-round(0.85*n)
+test_n<-n-train_n
+```
+```{r}
+train<-model_data[1:train_n, ]
+test <- model_data[(train_n+1):n, ]
+
+train.ts<- ts(train)
+test.ts<- ts(test)
+data.ts<-ts(model_data)
+```
+# MODEL KOYCK 
+## Pemodelan
+```{r}
+model.koyck<- koyckDlm(x=train$Xt, y = train$Yt)
+summary(model.koyck)
+```
+$Y_t-1$ memiliki nilai $p-value$ sebesar 1.88e-12 < 0.05, artinya nilai variabel Y periode sebelumnya berpengaruh sangat kuat terhadap nilai Y periode sekarang. Sedangkan $X_t$ memiliki nilai $p-value$ sebesar 0.659 > 0.05, yang artinya Nilai X saat ini tidak memiliki pengaruh langsung terhadap Y.Dalam pemodelan ini pun, didapatkan $R^2$ sebesar 0.8469 yang artinya model mampu menjelaskan sebesar 84.68% variasi dari $Y_t$. Adapun persamaan model ini adalah : 
+$$\hat{Y}_t = 0.91518 + 0.9336 Y_{t-1} + 0.0459 X_t$$
+## Peramalan 
+```{r}
+fore.koyck <- forecast(model = model.koyck, x=test$Xt, h = test_n)
+fore.koyck
+```
+## AKURASI
+```{r}
+# MAPE 
+mape.koyck <- MAPE(fore.koyck$forecasts, test$Yt)
+cat("mape koyck:", mape.koyck, "\n") 
+```
+```{r}
+# deviance
+get_deviance <- function(model){
+  sum(residuals(model)^2, na.rm = TRUE)
+}
+
+dev.koyck<- get_deviance(model.koyck$model)
+cat ("Deviance Model Koyck:", dev.koyck, "\n")
+```
+# Distributed Lag Model (DLM)
+## Lag Optimum
+```{r}
+q_max <- 10 
+dlm_auto <- finiteDLMauto(
+  formula = Yt ~ Xt,
+  data = data.frame(train),
+  q.min = 1, q.max= q_max,
+  model.type = "dlm", error.type="AIC", trace = TRUE
+)
+dlm_auto
+```
+```{r}
+q_opt<-dlm_auto[which.min(dlm_auto$AIC), "q - k"]
+cat("Lag Optimum DLM (q):", q_opt, "\n")
+```
+## Membangun ulang model DLM dengan Lag optimum 
+```{r}
+model.dlm.opt<- dlm(x=train$Xt, y = train$Yt, q = q_opt)
+summary(model.dlm.opt)
+```
+Didapatkan nilaii $p-value$ sebesar 0.02016 < 0.05, artinya simultan secara bersama-sama, variabel x pada periode yang berjalan beserta seluruh lagnya berpengaruh signifikan terhadap variabel y. Selain itu, didapatkan pula nilai $R^2$ sebesar 0.4073, yang artinya model mampu menjelaskan 40.73% variasi dari variabel y. Terlihat pula hanya $x_t$ dan $x_t-1$ yang berpengaruh signifikan, sedangkan $x_t-2$ hingga $x_t-10$ tidak berpengaruh signifikan. Kondisi dominasi lag yang tidak signifikan ini merupakan indikasi adanya multikolinearitas yang tinggi antar variabel lag x. 
+## Peramalan 
+```{r}
+fore.dlm.opt<- forecast(model=model.dlm.opt, x=test$Xt, h= test_n)
+```
+## AKURASI 
+```{r}
+# MAPE 
+mape.dlm <- MAPE(fore.dlm.opt$forecasts, test$Yt)
+mape.dlm
+```
+```{r}
+dev.dlm <- get_deviance(model.dlm.opt$model)
+dev.dlm
+```
+# Model Autoregressive Distributed Lag (ARDL)
+## Kombinasi lag optimum 
+```{r}
+p_max<-4
+q_max_ardl<-4
+model.ardl.search<- ardlBoundOrders(
+  data = data.frame(model_data), ic = "AIC",
+  formula = Yt ~ Xt, max.p = p_max, max.q = q_max_ardl
+)
+```
+
+```{r}
+min_p<-c()
+for(i in 1:q_max_ardl){
+  min_p[i]<-min(model.ardl.search$Stat.table[[i]])
+}
+q_opt_ardl <- which(min_p == min(min_p, na.rm = TRUE))
+p_opt_ardl <- which(
+  model.ardl.search$Stat.table[[q_opt_ardl]] ==
+    min(model.ardl.search$Stat.table[[q_opt_ardl]], na.rm = TRUE) 
+)
+data.frame("Lag_Y_opt(q)" = q_opt_ardl,
+           "Lag_X_opt(p)" = p_opt_ardl,
+           "AIC" = model.ardl.search$min.Stat)
+```
+## Membangun model ARDL dengan lag optimum 
+```{r}
+model.ardl <- ardlDlm(formula=Yt~Xt, data = train, 
+                      p = p_opt_ardl, q=q_opt_ardl)
+summary(model.ardl)
+```
+Didapatkan nilai $p-value$ sebesar 2.2e-16 < 0.05, yang artinya seluruh variabel X secara simultan berpengaruh signifikan terhadap Y. Didapatkan pula nilai $R^2$ sebesar 0.883 yang artinya sebesar 88.3% variasi dari variabel $Y_t$ dapat dijelaskan oleh model. 
+## Peramalan 
+```{r}
+fore.ardl<- forecast(model=model.ardl,x=test$Xt, h = test_n)
+```
+## Akurasi 
+```{r}
+# MAPE 
+mape.ardl <-MAPE(fore.ardl$forecasts, test$Yt)
+mape.ardl
+```
+```{r}
+# Deviance 
+dev.ardl <- get_deviance(model.ardl$model)
+dev.ardl
+```
+# Uji Asumsi Model (Menggunakan model dynlm) 
+## Model setara DLM & ARDL menggunakan dynlm 
+```{r}
+cons_lm_dlm  <- dynlm(Yt ~ Xt + L(Xt, 1:q_opt), data = train.ts)
+cons_lm_ardl <- dynlm(Yt ~ Xt + L(Xt, 1:p_opt_ardl) + L(Yt, 1:q_opt_ardl),
+                       data = train.ts)
+```
+## Uji Autokorelasi 
+```{r}
+dwtest(cons_lm_dlm)
+```
+```{r}
+dwtest(cons_lm_ardl)
+```
+Hasil dari uji autokorelasi didapatkan bahwa nilai p-value < 0.05, baik untuk DLM maupun ARDL. Artinya, Tolak H0 atau kedua model masih mengalami autokorelasi. 
+## Uji Heteroskedastisitas 
+```{r}
+bptest(cons_lm_dlm)
+```
+```{r}
+bptest(cons_lm_ardl)
+```
+Didapatkan nilai 0-value > 0.05, yang artinya Gagal tolak H0. Hal ini menunjukkan bahwa ragam sisaan bersifat homogen / bersifat homoskedastisitas
+## Uji Normalitas Residual (Shapiro Wilk)
+```{r}
+shapiro.test(residuals(cons_lm_dlm))
+```
+```{r}
+shapiro.test(residuals(cons_lm_ardl))
+```
+Didapatkan nilai p-value > 0.05, artinya gagal tolak H0. artinya sisaan kedua model berdistribusi normal. 
+# Perbandingan Performa Model 
+## AKURASI
+```{r}
+akurasi <- data.frame(
+  Model    = c("Koyck", "DLM Optimum", "ARDL Optimum"),
+  Lag      = c("q=NA (geometric)",
+               paste0("q=", q_opt),
+               paste0("p=", p_opt_ardl, ", q=", q_opt_ardl)),
+  MAPE     = c(mape.koyck, mape.dlm, mape.ardl),
+  Deviance = c(dev.koyck, dev.dlm, dev.ardl)
+)
+print(akurasi)
+```
+```{r}
+model_terbaik <- akurasi$Model[which.min(akurasi$MAPE)]
+cat("\nModel terbaik berdasarkan MAPE adalah:", model_terbaik, "\n")
+```
+## Visualisasi Perbandingan hasil peramalan 
+```{r}
+par(mfrow = c(1, 1))
+plot(1:test_n, test$Yt, type = "b", col = "black", lwd = 2, pch = 1,
+     ylim = range(c(test$Yt, fore.koyck$forecasts,
+                     fore.dlm.opt$forecasts, fore.ardl$forecasts)),
+     xlab = "Periode Uji", ylab = "AQI",
+     main = "Perbandingan Model Peramalan AQI")
+ 
+lines(1:test_n, fore.koyck$forecasts,   col = "red",   type = "b", pch = 16)
+lines(1:test_n, fore.dlm.opt$forecasts, col = "blue",  type = "b", pch = 17)
+lines(1:test_n, fore.ardl$forecasts,    col = "green", type = "b", pch = 18)
+
+legend("topleft",
+       legend = c("Aktual", "Koyck", "DLM Optimum", "ARDL Optimum"),
+       col = c("black", "red", "blue", "green"),
+       lty = 1, pch = c(1, 16, 17, 18), cex = 0.8, inset = 0.02)
+```
+Berdasarkan visualisasi diatas, terlihat bahwa pola pergerakan dari model Koyck yang mampu mengikuti pola pergerakan data aktual (garis hitam). Hal ini menunjukkan bahwa model Koyck yang paling cocok untuk menangkap tren kenaikan jangka panjang dari PM 2.5 terhadap AQI. 
+
+
+
+
+
