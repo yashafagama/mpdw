@@ -1,0 +1,332 @@
+---
+title: "Tugas MPDW Pertemuan 4"
+author: "Yasmin Aufaahani Abdullah-M0401241129"
+date: "2026-09-17"
+output: 
+  html_document:
+    theme: lumen
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    code_folding: hide
+  pdf_document: default
+  word_document: default
+---
+
+```{r}
+library(TSA)
+```
+
+# Proses MA(2)
+```{r}
+set.seed (129)
+
+n<-300
+theta1<- 0.4 
+theta2<- 0.6
+```
+
+## Pembangkitan Manual 
+```{r}
+e <- rnorm(n,mean=0, sd=1)
+manual <- numeric (n)
+
+manual[1] <- e[1]
+manual[2] <- e[2] + theta1*e[1]
+
+for (t in 3:n) {
+  manual[t] <- e[t] + theta1 *e[t-1] + theta2 * e[t-2]
+}
+manual
+```
+
+## Pembangkitan dengan Arima.sim
+```{r}
+ar_sim <-arima.sim(model = list(ma=c(theta1, theta2)), n=n)
+ar_sim
+```
+
+## Plot Time Series 
+```{r}
+data_ma2 <- manual 
+
+plot.ts(data_ma2, main="Plot Time Series MA(2)", ylab = "Y_t", col = "steelblue")
+abline (h=mean(data_ma2), col = "red", lty=2)
+```
+Berdasarkan plot time series, terlihat bahwa data MA(2) hasil bangkitan stasioner. Hal ini karena fluktuasi data bergerak secara konsisten di garis rata-rata dan varians data juga relatif konstan. 
+
+## Plot ACF 
+```{r}
+acf(data_ma2, main="Plot ACF MA(2)")
+```
+Berdasarkan plot ACF MA(2), terlihat bahwa nilai ACF hanya signifikan pada lag 1 dan 2, sedangkan lag setelahnya tidak signifikan karena berada di dalam selang kepercayaan. Hal ini menunjukkan adanya cuts off yang mengindikasikan bahwa data stasioner 
+
+## Plot PACF 
+```{r}
+pacf(data_ma2, main = "Plot PACF MA(2)")
+```
+Berdasarkan plot PACF, terlihat bahwa data stasioner karena nilai PACF menurun secara eksponensial. 
+
+## Plot EACF
+```{r}
+TSA::eacf(data_ma2)
+```
+Berdasarkan plot EACF, data bangkitan tergolong pada data stasioner, karena adanya segitiga nol pada ordo AR (0) dan MA (2) 
+
+## Scatterplot antar Lag 
+
+```{r}
+### Antara $Y_t$ dengan $Y_t-1$ 
+```
+```{r}
+yt <-data_ma2[4:n]
+yt_1 <-data_ma2[3:(n-1)]
+
+plot(y=yt, x=yt_1)
+```
+Berdasarkan scatterplot diatas, terlihat bahwa adanya korelasi positif antara $Y_t$ dengan $Y_(t-1)$
+
+```{r}
+### Antara $Y_t$ dengan $Y_t-2$ 
+```
+```{r}
+yt_2<- data_ma2[2:(n-2)] 
+
+plot(y=yt, x=yt_2)
+```
+Berdasarkan scatterplot diatas, terlihat bahwa adanya korelasi positif antara $Y_t$ dengan $Y_(t-2)$
+
+```{r}
+### Antara $Y_t$ dengan $Y_t-3$ 
+```
+```{r}
+yt_3 <- data_ma2[1:(n-3)] 
+
+plot(y=yt, x=yt_3)
+```
+Berdasarkan scatterplot diatas, terlihat bahwa titik menyebar secara acak dan menumpuk di sekitar 0. Hal ini menunjukkan tidak adanya korelasi antara $Y_t$ dengan $Y_(t-3)$
+
+## Autokorelasi Data Bangkitan 
+```{r}
+r_data_bangkitan<- acf(data_ma2, lag.max=3, plot = FALSE)$acf[,,1]
+r_data_bangkitan
+```
+
+## Autokorelasi Teoritis 
+```{r}
+denom <- 1+theta1^2+theta2^2
+rho0_teoritis <- 1 
+rho1_teoritis <- (theta1+theta1*theta2)/denom
+rho2_teoritis <- theta2/denom
+rho3_teoritis <- 0
+
+r_teoritis <- c(rho0_teoritis,rho1_teoritis, rho2_teoritis,rho3_teoritis) 
+r_teoritis
+```
+Nilai autokorelasi data bangkitan telah mendekati pola nilai teoritisnya. 
+
+# Proses AR(2)
+```{r}
+set.seed(129)
+
+n<- 300 
+phi1 <- 0.5 
+phi2 <- 0.2 
+```
+
+## Pembangkitan Manual
+```{r}
+e<- rnorm(n, mean = 0, sd=1)
+ar2_manual <- numeric(n)
+
+ar2_manual [1] <- e[1]
+ar2_manual[2]<- phi1* ar2_manual[1] +e[2]
+
+for (t in 3:n){
+  ar2_manual[t]<- phi1 * ar2_manual[t-1] +phi2* ar2_manual[t-2] + e[t]
+}
+ar2_manual
+```
+
+## Pembangkitan dengan arima.sim 
+```{r}
+ar2_sim <- arima.sim(model=list(ar=c(phi1, phi2)), n=n) 
+ar2_sim
+```
+
+## Plot Time Series 
+```{r}
+ar2<- ar2_manual 
+plot.ts(ar2, main = "Plot Time Series AR(2)", ylab = "Y_t")
+abline (h=mean(ar2), col = "red", lty=2)
+```
+Berdasarkan plot time series AR(2), terlihat bahwa fluktuasi data bergerak cenderung konstan dalam rataan dan ragam. Hal ini menunjukkan bahwa data stasioner. 
+
+## Plot ACF 
+```{r}
+acf(ar2, main ="Plot ACF AR(2)")
+```
+Berdasarkan ACF AR(2), terlihat bahwa adanya tails off seiring bertambahnya lag. Hal ini menunjukkan bahwa data stasioner. 
+
+## Plot PACF 
+```{r}
+pacf(ar2, main ="Plot PACF AR (2)")
+```
+Berdasarkan plot PACF AR(2), terlihat adanya cut off dari lag 3. Hal ini menunjukkan bahwa data stasioner 
+
+## Plot EACF 
+```{r}
+eacf(ar2)
+```
+Berdasarkan plot eacf di atas, terlihat bahwa data stasioner 
+
+## Scatterplot antar Lag 
+```{r}
+### Antara $Y_t$ dengan $Y_t-1$ 
+```
+```{r}
+yt_ar<- ar2[4:n]
+yt_1_ar <- ar2[3:(n-1)]
+
+plot(y=yt_ar, x=yt_1_ar, main ="Yt vs Y(t-1)")
+```
+
+```{r}
+### Antara $Y_t$ dengan $Y_t-2$ 
+```
+```{r}
+yt_2_ar<- ar2[2:(n-2)]
+plot(y=yt_ar, x=yt_2_ar, main = "Yt vs Y(t-2)")
+```
+
+```{r}
+### Antara $Y_t$ dengan $Y_t-3$ 
+```
+```{r}
+yt_3_ar <- ar2[1:(n-3)]
+
+plot(y=yt_ar, x=yt_3_ar, main = "Yt vs Y(t-3)")
+```
+Berdasarkan scatterplot antarlag, terlihat bahwa adanya korelasi positif antara Y dengan lag 1,2, maupun 3. 
+
+## Autokorelasi Data Bangkitan 
+```{r}
+r_databangkitan_ar <- acf(ar2, lag.max = 3, plot = FALSE)$acf[,,1]
+r_databangkitan_ar
+```
+
+## Autokorelasi Teoritis 
+```{r}
+rho0_teoritis_ar<- 1
+rho1_teoritis_ar<- phi1/(1-phi2)
+rho2_teoritis_ar <- phi1 *rho1_teoritis_ar+phi2
+rho3_teoritis_ar <- phi1 * rho2_teoritis_ar+phi2*rho1_teoritis_ar
+
+r_teoritis_ar<- c(rho0_teoritis_ar, rho1_teoritis_ar, rho2_teoritis_ar, rho3_teoritis_ar)
+
+r_teoritis_ar
+```
+Berdasarkan hasil autokorelasi, terlihat bahwa autokorelasi data bangkitan sudah mendekati dan cenderung mengikuti pola autokorelasi teoritis 
+
+# Proses ARMA(2,2)
+```{r}
+set.seed(129)
+
+n<- 300 
+teta1 <- 0.4 
+teta2 <- 0.6
+phi1 <- 0.5
+phi2 <- 0.2 
+```
+
+## Pembangkitan Manual 
+```{r}
+e <- rnorm(n, mean=0, sd=1)
+arma22_manual <- numeric(n)
+
+arma22_manual [1]<-e[1]
+arma22_manual [2] <- phi1*arma22_manual[1]+e[2]+teta1*e[1]
+
+for(t in 3:n){
+  arma22_manual[t]<- phi1*arma22_manual[t-1]+phi2*arma22_manual[t-2] + e[t]+teta1 *e[t-1] +teta2*e[t-2]
+}
+arma22_manual
+```
+
+## Pembangkitan dengan arima.sim 
+```{r}
+arma22_sim<- arima.sim(model=list(ar=c(phi1, phi2), ma=c(teta1, teta2)), n=n)
+arma22_sim
+```
+
+## Plot Time Series ARMA(2,2)
+```{r}
+data_arma22 <- arma22_manual
+plot.ts(data_arma22, main = "Plot Time Series ARMA(2,2)", ylab = "Y_t")
+abline(h = mean(data_arma22), col = "red", lty = 2)
+```
+Berdasarkan plot time series arma di atas, terlihat bahwa fluktuasi nya bergerak di sekitar rataan dan ragam. Maka dapat dikatakan bahwa data stasioner. 
+
+## Plot ACF ARMA(2,2)
+```{r}
+acf(data_arma22, main = "Plot ACF ARMA(2,2)")
+```
+Berdasarkan plot ACF ARMA(2,2), terlihat bahwa nilai autokorelasinya menurun secara eksponensial (adanya tails off). Dengan ini, dapat dinyatakan bahwa data stasioner. 
+
+## Plot PACF ARMA(2,2)
+```{r}
+pacf(data_arma22, main ="Plot PACF ARMA(2,2)")
+```
+Berdasarkan Plot PACF tersebut, terlihat bahwa nilai partial autocorrelationnya menurun menuju nol secara eksponensial (adanya tails off). Maka, dapat dikatakan bahwa data stasioner 
+
+## Plot EACF ARMA(2,2)
+```{r}
+eacf(data_arma22)
+```
+Telihat bahwa adanya segitiga nol yang terbentuk di ordo AR(0) dan MA(0), yang mengindikasikan bahwa data stasioner. 
+
+## Scatterplot antar lag 
+```{r}
+### Antara $Y_t$ dengan $Y_t-1$ 
+```
+```{r}
+yt_arma <- data_arma22[4:n]
+yt_1_arma <- data_arma22[3:(n-1)]
+plot(y=yt_arma, x = yt_1_arma, main ="Yt vs Y(t-1)")
+```
+```{r}
+### Antara $Y_t$ dengan $Y_t-2$ 
+```
+```{r}
+yt_2_arma <- data_arma22[2:(n-2)]
+plot(y=yt_arma, x= yt_2_arma, main ="Yt vs Y(t-2)")
+```
+```{r}
+### Antara $Y_t$ dengan $Y_t-3$ 
+```
+```{r}
+yt_3_arma <- data_arma22[1:(n-3)]
+
+plot(y=yt_arma, x = yt_3_arma, main = "Yt vs Y(t-3)")
+```
+Berdasarkan ketiga scatterplot antar lag, terlihat bahwa setiap lag memiliki korelasi positif dengan Yt. 
+
+## Autokorelasi data bangkitan ARMA(2,2)
+```{r}
+r_databangkitan_arma<- acf(data_arma22, lag.max = 3, plot = FALSE)$acf[,,1]
+r_databangkitan_arma
+```
+
+## Autokorelasi Teoritis ARMA(2,2)
+```{r}
+r_teoritis_arma <- ARMAacf(
+  ar=c(phi1, phi2),
+  ma=c(teta1, teta2), 
+  lag.max=3
+)
+r_teoritis_arma
+```
+Berdasarkan nilai autokorelasi, didapatkan bahwa autokorelasi data bangkitan cenderung mendekati dan mengikuti pola autokorelasi teoritis pada ARMA(2,2). 
+
+
+
