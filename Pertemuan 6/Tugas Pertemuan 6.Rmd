@@ -1,0 +1,757 @@
+---
+title: "Forecasting Harga Ayam di Riau Menggunakan ARIMA"
+author: "Yasmin Aufaahani Abdullah<br>M0401241129"
+date: "2026-10-01"
+output: rmdformats::readthedown
+---
+
+# Library
+```{r}
+library(readxl)
+library(forecast)
+library(tseries)
+library(TSA)
+library(ggplot2)
+library(MASS)
+library(lmtest)
+```
+
+# Input Data 
+```{r}
+data<- read_excel("C:/Users/User/Downloads/MPDW/mpdw/mpdw/Data Harga Ayam di Provinsi Riau.xlsx", col_types = "text")
+
+names(data)
+str(data)
+head(data)
+nrow(data)
+```
+
+# Preprocessing Data 
+## Standarisasi Format Data 
+```{r}
+data$Tanggal <- gsub(" ", "", data$Tanggal)
+data$Tanggal <- as.Date(data$Tanggal, format = "%d/%m/%Y")
+
+data$Harga <- as.numeric(gsub(",", "", data$Harga))
+
+head(data)
+str(data)
+```
+
+## Penanganan Missing Value
+```{r}
+sum(is.na(data)) 
+colSums(is.na(data))
+```
+```{r}
+cat("NA pada Tanggal :", sum(is.na(data$Tanggal)), "\n")
+cat("NA pada Harga   :", sum(is.na(data$Harga)), "\n")
+
+data[!complete.cases(data), ]
+```
+
+```{r}
+data<- data[!is.na(data$Harga), ]
+colSums(is.na(data))
+
+# Urutkan data berdasarkan tanggal 
+data<-data[order(data$Tanggal), ]
+
+sum(duplicated(data$Tanggal)) 
+
+head(data)
+tail(data)
+nrow(data)
+```
+
+# Plot Data Aktual
+```{r}
+plot(
+  data$Tanggal,
+  data$Harga,
+  type = "l",
+  main = "Plot Harga Ayam di Provinsi Riau",
+  xlab = "Tanggal",
+  ylab = "Harga (Rp)"
+)
+```
+
+# Konversi Menjadi Data Time Series 
+```{r}
+harga <- ts(data$Harga, frequency = 5)
+``` 
+
+# Split Data 
+```{r} 
+n <- length(harga)
+n 
+
+n_train <- floor(0.8*n)
+
+train <- harga[1:n_train]
+test <- harga[(n_train+1):n]
+
+length(train) 
+length(test)
+```
+Dari total data sebanyak 520 baris, dilakukan split data untuk train sebanyak 416 data (80% dari total data) dan data test sebanyak 104 (20% dari total data)
+
+# Stasioneritas dalam Rataan  
+## Plot Data Training
+```{r}
+plot(train,
+     type = "l",
+     main = "Plot Data Training",
+     xlab = "Waktu",
+     ylab = "Harga (Rp)")
+```
+Terlihat bahwa Data training menunjukkan pergerakan pola trend naik 
+
+## ACF 
+```{r} 
+acf(train,
+    main = "ACF Data Training")
+```
+Grafik menunjukkan adanya tails off dan nilai autokorelasi tetap signifikan di beberapa lag. Hal ini mengindikasikan adanya pola ketergantungan antarwaktu yang kuat 
+
+## PACF 
+```{r}
+pacf(train,
+     main = "PACF Data Training")
+```
+Terlihat adanya lonjakan pada lag 1, sedangkan lag berikutnya berasa di batas signifikansi. Pola ini menunjukkan kemungkinan komponen AR(1)
+
+## Uji ADF 
+```{r}
+adf.test(train) 
+```
+Didapatkan p-value sebesar 0.2701 > 0.05, maka H0 gagal ditolak. Hal ini menunjukkan bahwa data training belum stasioner dalam rata rata. Maka dibutuhkan proses differencing. 
+
+## Differencing 
+```{r}
+train_diff <- diff(train, differences = 1)
+```
+
+### Plot Differencing Orde 1
+```{r}
+plot(train_diff,
+     type = "l",
+     main = "Data Training Setelah Differencing Orde 1",
+     xlab = "Waktu",
+     ylab = "Differenced Harga")
+```
+
+### ACF Setelah Differencing 
+```{r}
+acf(train_diff,
+    main = "ACF Setelah Differencing")
+```
+
+### PACF setelah Differencing 
+```{r}
+pacf(train_diff,
+     main = "PACF Setelah Differencing")
+```
+
+### Uji ADF SetelH Differencing 
+```{r}
+adf.test(train_diff)
+```
+Diperoleh p-value sebesar 0.01 < 0.05, maka H0 ditolak. Hal ini menunjukkan bahwa data training setelah differencing dengan orde 1 sudah stasioner dalam rataan. Berdasarkan grafik ACF, PACF pun menunjukkan sebagian besar nilai autokorelasi berada dalam batas signifikansi. 
+
+# Stasioneritas Dalam Ragam 
+## Box-Cox
+```{r}
+bc <- boxcox(train ~ 1,
+             lambda = seq(-2, 2, by = 0.01),
+             plotit = TRUE) 
+```
+
+## Lambda Optimum
+```{r}
+lambda_hat <- bc$x[which.max(bc$y)]
+lambda_hat
+```
+## Selang Kepercayaan Lambda
+```{r}
+max_loglik <- max(bc$y)
+
+cutoff <- max_loglik - qchisq(0.95, df = 1) / 2
+
+CI_lambda <- range(
+  bc$x[bc$y >= cutoff]
+)
+
+CI_lambda
+```
+Berdasarkan uji Box-Cox, didapatkan nilai lambda optimum sebesar -0.65 dengan interval kepercayaan pada 95% sebesar [-1.79 ; 0.49]. Interval kepercayaan ini tidak mengandung nilai lamda = 1. sehingag data belum memenuhi asumsi stasioner dalam ragam. Maka dibutuhkan transformasi Boc-Cox dengan lamda = -0.65. 
+
+## Transformasi Box-Cox dengan Lamda Optimum
+```{r}
+train_bc <- BoxCox(train, lambda=lambda_hat)
+
+plot(
+  train_bc,
+  type = "l",
+  main = "Data Training Setelah Transformasi Box-Cox",
+  xlab = "Waktu",
+  ylab = "Harga Transformasi"
+)
+```
+
+## Differencing Setelah Box-Cox 
+```{r}
+train_bc_diff <- diff(train_bc, differences = 1)
+```
+
+## ACF, PACF, dan EACF setelah Transformasi dan Differencing
+```{r}
+par(mfrow = c(1, 2))
+
+acf(train_bc_diff,
+    main = "ACF Data Setelah Transformasi dan Differencing")
+
+pacf(train_bc_diff,
+     main = "PACF Data Setelah Transformasi dan Differencing")
+eacf(train_bc_diff)
+```
+Pada grafik ACF, Terlihat beberapa lag yang melewati batas signifikansi, terutama pada lag awal dan beberapa lag berikutnya. Pola ini menunjukkan masih adanya autokorelasi pada data.Sedangkan, grafik pacf terlihat beberapa lag yang signifikan, terutama pada lag 1, serta terdapat lonjakan pada lag 20 dan lag 24. Hal ini menunjukkan adanya hubungan antara nilai pengamatan saat ini dengan beberapa nilai pengamatan sebelumnya.
+
+## Model ARIMA Potensial dengan Lamda Optimum
+```{r}
+model_bc_1 <- Arima(train,
+                 order = c(0,1,3),
+                 lambda = lambda_hat,
+                 include.constant = FALSE)
+
+model_bc_2 <- Arima(train,
+                 order = c(1,1,1),
+                 lambda = lambda_hat,
+                 include.constant = FALSE)
+
+model_bc_3 <- Arima(train,
+                 order = c(2,1,2),
+                 lambda = lambda_hat,
+                 include.constant = FALSE)
+
+model_bc_4 <- Arima(train,
+                 order = c(3,1,3),
+                 lambda = lambda_hat,
+                 include.constant = FALSE)
+
+model_bc_5 <- Arima(train,
+                 order = c(4,1,1),
+                 lambda = lambda_hat,
+                 include.constant = FALSE)
+```
+
+##  Membandingkan Nilai AIC Box COx
+```{r}
+hasil_aic_bc <- data.frame(
+  Model = c(
+    "ARIMA(0,1,3)",
+    "ARIMA(1,1,1)",
+    "ARIMA(2,1,2)",
+    "ARIMA(3,1,3)",
+    "ARIMA(4,1,1)"
+  ),
+
+  AIC = c(
+     AIC(model_bc_1),
+    AIC(model_bc_2),
+    AIC(model_bc_3),
+    AIC(model_bc_4),
+    AIC(model_bc_5)
+  )
+)
+
+hasil_aic_bc <- hasil_aic_bc[
+  order(hasil_aic_bc$AIC),
+]
+
+hasil_aic_bc
+```
+
+## Uji Signifikansi Parameter
+```{r}
+coeftest(model_bc_1)
+```
+```{r}
+coeftest(model_bc_2)
+```
+```{r}
+coeftest(model_bc_3)
+```
+```{r}
+coeftest(model_bc_4)
+```
+```{r}
+coeftest(model_bc_5)
+```
+
+## Kandidat Awal Box Cox 
+```{r}
+daftar_bc <- list(
+  model_bc_1,
+  model_bc_2,
+  model_bc_3,
+  model_bc_4,
+  model_bc_5
+)
+
+indeks_bc <- which.min(
+  sapply(daftar_bc, AIC)
+)
+
+model_bc_terpilih <- daftar_bc[[indeks_bc]]
+
+summary(model_bc_terpilih)
+```
+Berdasarkan perbandingan nilai AIC dan uji signifikansi parameter, didapatkan model terbaik box-cox di ARIMA (3,1,3) dengan nilai AIC terkecil diantara model lainnya 
+
+## Pemeriksaan Diagnostik Sisaan Box - Cox 
+```{r}
+checkresiduals(model_bc_terpilih)
+```
+Berdasarkan grafik diagnostik residual ARIMA(3,1,3), residual terlihat berfluktuasi di sekitar nol dan sebagian besar nilai ACF residual berada dalam batas signifikansi, sehingga tidak menunjukkan adanya autokorelasi yang kuat. Hasil uji Ljung-Box memperoleh nilai statistik Q∗=0,069318 dengan p-value sebesar 0,9994, lebih besar dari taraf signifikansi 5% (0,05), sehingga H₀ tidak ditolak. Hal ini menunjukkan bahwa residual tidak mengandung autokorelasi yang signifikan atau telah memenuhi asumsi white noise. Dengan demikian, model ARIMA(3,1,3) telah memenuhi salah satu asumsi diagnostik residual dan dapat dilanjutkan ke tahap peramalan.
+
+## Uji Normalitas Sisaan Box Cox
+```{r} 
+shapiro.test(
+  na.omit(residuals(model_bc_terpilih))
+)
+```
+Berdasarkan hasil uji Shapiro-Wilk pada residual model ARIMA(3,1,3), diperoleh nilai statistik W = 0,084828 dengan p-value < 2,2 × 10⁻¹⁶. Karena p-value lebih kecil dari taraf signifikansi 5% (α = 0,05), maka H₀ ditolak, sehingga dapat disimpulkan bahwa residual model ARIMA(3,1,3) tidak berdistribusi normal. Dengan demikian, asumsi normalitas residual pada model ARIMA(3,1,3) belum terpenuhi. Namun, dalam arima, residual tidak wajib berdistribusi normal. 
+
+# Analisis Alternatif Transformasi Algoritma Lamda = 0 
+
+Sebagai alternatif dari transformasi Box-Cox dengan lamda optimal, dilakukan juga transformasi Algoritma Lamda = 0. Hal ini dilakukan karena adanya indikasi MAPE yang terlalu besar.  
+
+## Identifikasi Data dengan Transformasi Logaritma 
+```{r}
+train_log <- log(train)
+
+plot(
+  train_log,
+  type = "l",
+  main = "Data Training Setelah Transformasi Logaritma",
+  xlab = "Waktu",
+  ylab = "Log Harga"
+)
+```
+
+## Differencing Setelah Transformasi Logaritma 
+```{r}
+train_log_diff <- diff(
+  train_log,
+  differences = 1
+)
+```
+
+## ACF, PACF, dan EACF Logaritma 
+```{r}
+par(mfrow = c(2, 1))
+
+acf(
+  train_log_diff,
+  main = "ACF Transformasi Logaritma dan Differencing"
+)
+
+pacf(
+  train_log_diff,
+  main = "PACF Transformasi Logaritma dan Differencing"
+)
+
+par(mfrow = c(1, 1))
+
+eacf(train_log_diff)
+```
+Berdasarkan plot ACF dan PACF setelah transformasi logaritma dan differencing, sebagian besar spike pada ACF dan PACF berada dalam batas signifikansi, dengan beberapa spike yang masih signifikan pada lag awal. Pola ini menunjukkan bahwa ketergantungan data setelah differencing sudah relatif lemah, tetapi masih terdapat indikasi komponen AR dan MA pada lag rendah. Berdasarkan tabel kombinasi AR/MA, beberapa kandidat model kemudian diuji, dengan kombinasi ARIMA(3,1,3) termasuk salah satu model yang dipertimbangkan untuk tahap pemodelan selanjutnya.
+
+## Pembentukan Kandidat ARIMA dengan Lamda = 0 
+```{r}
+# Kandidat ARIMA transformasi logaritma
+
+model_log_1 <- Arima(
+  train,
+  order = c(0,1,3),
+  lambda = 0,
+  include.constant = FALSE
+)
+
+model_log_2 <- Arima(
+  train,
+  order = c(0,1,4),
+  lambda = 0,
+  include.constant = FALSE
+)
+
+model_log_3 <- Arima(
+  train,
+  order = c(1,1,1),
+  lambda = 0,
+  include.constant = FALSE
+)
+
+model_log_4 <- Arima(
+  train,
+  order = c(1,1,2),
+  lambda = 0,
+  include.constant = FALSE
+)
+
+model_log_5 <- Arima(
+  train,
+  order = c(2,1,2),
+  lambda = 0,
+  include.constant = FALSE
+)
+```
+
+## Perbandingan AIC Logaritma 
+```{r}
+hasil_aic_log <- data.frame(
+  Model = c(
+    "ARIMA(0,1,3)",
+    "ARIMA(0,1,4)",
+    "ARIMA(1,1,1)",
+    "ARIMA(1,1,2)",
+    "ARIMA(2,1,2)"
+  ),
+
+  AIC = c(
+    AIC(model_log_1),
+    AIC(model_log_2),
+    AIC(model_log_3),
+    AIC(model_log_4),
+    AIC(model_log_5)
+  )
+)
+
+hasil_aic_log <- hasil_aic_log[
+  order(hasil_aic_log$AIC),
+]
+
+hasil_aic_log
+```
+Berdasarkan nilai AIC, model ARIMA(1,1,1) memiliki nilai AIC paling kecil, yaitu −2643,293, dibandingkan kandidat model lainnya. Oleh karena itu, berdasarkan kriteria AIC, ARIMA(1,1,1) menjadi model yang dipilih dari lima kandidat tersebut. Selanjutnya, model terpilih perlu melalui uji diagnostik residual untuk memastikan residual telah memenuhi karakteristik white noise sebelum digunakan untuk peramalan.
+
+## Uji signifikansi Parameter Logaritma 
+```{r}
+coeftest(model_log_1)
+```
+```{r}
+coeftest(model_log_2)
+```
+```{r}
+coeftest(model_log_3)
+```
+```{r}
+coeftest(model_log_4)
+```
+```{r}
+coeftest(model_log_5)
+```
+Berdasarkan uji signifikansi koefisien, ARIMA(1,1,1) memiliki koefisien AR(1) dan MA(1) yang signifikan pada α = 5% (p-value < 0,05), sedangkan ARIMA(1,1,2) memiliki AR(1) dan MA(1) yang signifikan tetapi MA(2) tidak signifikan. Pada ARIMA(0,1,3), MA(1) dan MA(2) signifikan, sementara MA(3) tidak signifikan pada α = 5%. ARIMA(0,1,4) memiliki MA(1) dan MA(3) signifikan, sedangkan MA(2) dan MA(4) tidak signifikan. Sementara itu, seluruh koefisien pada ARIMA(2,1,2) tidak signifikan. Dengan demikian, berdasarkan signifikansi parameter, ARIMA(1,1,1) menunjukkan seluruh parameternya signifikan pada taraf 5%, sehingga menjadi kandidat yang memenuhi kriteria signifikansi parameter. 
+
+## Kandidat awal Logaritma 
+```{r}
+daftar_log <- list(
+  model_log_1,
+  model_log_2,
+  model_log_3,
+  model_log_4,
+  model_log_5
+)
+
+indeks_log <- which.min(
+  sapply(daftar_log, AIC)
+)
+
+model_log_terpilih <- daftar_log[[indeks_log]]
+
+summary(model_log_terpilih)
+```
+Berdasarkan hasil estimasi, model ARIMA(1,1,1) dengan transformasi Box-Cox λ = 0 (logaritma) memiliki koefisien AR(1) sebesar 0,7240 dan MA(1) sebesar −0,5549. Model memiliki AIC = −2643,29, dengan nilai AICc = −2643,23 dan BIC = −2631,21. Pada data training, diperoleh RMSE = 307,52, MAE = 162,79, dan MAPE = 0,53%, yang menunjukkan rata-rata kesalahan persentase relatif kecil. Nilai ACF1 = 0,0017 yang mendekati nol juga menunjukkan bahwa autokorelasi residual pada lag pertama sangat kecil. Secara keseluruhan, model ARIMA(1,1,1) memberikan hasil pemodelan yang cukup baik pada data training dan selanjutnya perlu dikonfirmasi melalui diagnostik residual, khususnya uji Ljung-Box.
+
+## Diagnostik Residual Algoritma 
+```{r}
+checkresiduals(model_log_terpilih)
+```
+Berdasarkan uji Ljung-Box pada residual model ARIMA(1,1,1), diperoleh Q = 7,0187* dengan p-value = 0,5346. Karena p-value > 0,05, maka H₀ tidak ditolak, sehingga tidak terdapat bukti adanya autokorelasi yang signifikan pada residual hingga lag 10. Dengan demikian, residual dapat dianggap telah memenuhi karakteristik white noise, sehingga dari sisi independensi residual, model ARIMA(1,1,1) sudah memadai dan dapat digunakan untuk tahap peramalan.
+
+```{r}
+shapiro.test(
+  na.omit(residuals(model_log_terpilih))
+)
+```
+Berdasarkan uji Shapiro-Wilk pada residual model ARIMA(1,1,1), diperoleh nilai W = 0,78225 dengan p-value < 2,2 × 10⁻¹⁶. Karena p-value < 0,05, maka H₀ ditolak, sehingga residual tidak berdistribusi normal. Namun, ketidaknormalan residual ini tidak berarti model ARIMA tidak layak, karena normalitas bukan merupakan asumsi utama dalam pemodelan ARIMA. Yang lebih penting adalah residual memenuhi karakteristik white noise, yang telah diperiksa melalui uji Ljung-Box.
+
+# Overfitting 
+## Overfitting Box-cox 
+```{r}
+model_awal_bc <- Arima(
+  train,
+  order = c(3,1,3),
+  lambda = lambda_hat,
+  include.constant = FALSE
+)
+
+# Model overfitting dengan penambahan orde AR dan MA
+model_over_1_bc <- Arima(
+  train,
+  order = c(4,1,3),
+  lambda = lambda_hat,
+  include.constant = FALSE
+)
+
+model_over_2_bc <- Arima(
+  train,
+  order = c(3,1,4),
+  lambda = lambda_hat,
+  include.constant = FALSE
+)
+
+model_over_3_bc <- Arima(
+  train,
+  order = c(4,1,4),
+  lambda = lambda_hat,
+  include.constant = FALSE
+)
+```
+
+## Perbandingan AIC & BIC Overfitting Box Cox 
+```{r}
+tabel_overfitting_bc <- data.frame(
+  Model = c(
+    "ARIMA(3,1,3)",
+    "ARIMA(4,1,3)",
+    "ARIMA(3,1,4)",
+    "ARIMA(4,1,4)"
+  ),
+  AIC = c(
+    AIC(model_awal_bc),
+    AIC(model_over_1_bc),
+    AIC(model_over_2_bc),
+    AIC(model_over_3_bc)
+  ),
+  BIC = c(
+    BIC(model_awal_bc),
+    BIC(model_over_1_bc),
+    BIC(model_over_2_bc),
+    BIC(model_over_3_bc)
+  )
+)
+
+print(tabel_overfitting_bc)
+```
+Berdasarkan hasil overfitting pada model Box-Cox, model ARIMA(3,1,3) memiliki nilai AIC dan BIC paling kecil, yaitu AIC = −8220,873 dan BIC = −8192,675, dibandingkan model ARIMA(4,1,3), ARIMA(3,1,4), dan ARIMA(4,1,4). Hal ini menunjukkan bahwa penambahan orde AR atau MA pada model ARIMA(3,1,3) tidak menghasilkan model dengan kriteria AIC/BIC yang lebih baik. Dengan demikian, ARIMA(3,1,3) tetap dipertahankan sebagai model terpilih berdasarkan hasil overfitting
+
+## Overfitting Logaritma 
+```{r}
+model_log_over_1 <- Arima(
+  train,
+  order = c(2, 1, 1),
+  lambda = 0,
+  include.constant = FALSE
+)
+
+model_log_over_2 <- Arima(
+  train,
+  order = c(1, 1, 2),
+  lambda = 0,
+  include.constant = FALSE
+)
+
+model_log_over_3 <- Arima(
+  train,
+  order = c(2, 1, 2),
+  lambda = 0,
+  include.constant = FALSE
+)
+```
+
+## Perbandingan AIC Overfitting Logaritma 
+```{r}
+hasil_overfit_log <- data.frame(
+  Model = c(
+    "Model Awal",
+    "Overfit 1",
+    "Overfit 2",
+    "Overfit 3"
+  ),
+
+  AIC = c(
+    AIC(model_log_terpilih),
+    AIC(model_log_over_1),
+    AIC(model_log_over_2),
+    AIC(model_log_over_3)
+  )
+)
+
+hasil_overfit_log[
+  order(hasil_overfit_log$AIC),
+]
+```
+Berdasarkan hasil overfitting pada model dengan transformasi logaritma, model awal memiliki nilai AIC paling kecil, yaitu −2643,293, dibandingkan seluruh model overfit. Model Overfit 1, 2, dan 3 masing-masing memiliki AIC −2641,559, −2641,603, dan −2639,787. Karena semakin kecil nilai AIC menunjukkan model yang lebih baik, penambahan orde AR atau MA tidak memberikan perbaikan terhadap model awal. Dengan demikian, ARIMA(1,1,1) tetap dipertahankan sebagai model terpilih berdasarkan kriteria AIC.
+
+# Forecasting Box-Cox dan Logaritma 
+## Forecast Box-Cox 
+```{r}
+# Model final ARIMA(3,1,3) Box-Cox
+model_final_bc <- Arima(
+  train,
+  order = c(3, 1, 3),
+  lambda = lambda_hat,
+  include.constant = FALSE
+)
+
+# Forecast ARIMA(3,1,3) Box-Cox
+forecast_bc <- forecast(
+  model_final_bc,
+  h = length(test),
+  biasadj = TRUE
+)
+```
+## Forecast Logaritma
+```{r}
+model_final_log <- Arima(
+  train,
+  order = c(1, 1, 1),
+  lambda = 0,
+  include.constant = FALSE
+)
+
+forecast_log <- forecast(
+  model_final_log,
+  h = length(test),
+  biasadj = TRUE
+)
+```
+
+# Tabel Hasil Forecast 
+```{r}
+hasil_forecast <- data.frame(
+  Periode = seq_along(test),
+  Aktual = as.numeric(test),
+  Forecast_BoxCox = as.numeric(forecast_bc$mean),
+  Forecast_Log = as.numeric(forecast_log$mean)
+)
+
+head(hasil_forecast, 10)
+tail(hasil_forecast, 10)
+```
+Terlihat bahwa data hasil forecast boxcox di data awal berhasil mendekati data aktualnya, begitupun pada forecast logaritma. Namun, pada data di bagian akhir, terlihat bahwa hasil forecast box cox terlihat sangat menyimpang dari data aktual. Sementara nilai forecast logaritma masih berhasil mempertahankan performa nya untuk mendekati nilai aktual. 
+
+# Grafik Perbandingan Forecast 
+```{r}
+# Grafik Box Cox 
+
+plot(
+  as.numeric(test),
+  type = "l",
+  col = "black",
+  lwd = 2,
+  ylim = range(
+    c(test, forecast_bc$mean),
+    na.rm = TRUE
+  ),
+  main = "Forecast ARIMA dengan Transformasi Box-Cox",
+  xlab = "Periode Testing",
+  ylab = "Harga Ayam (Rp)"
+)
+
+lines(
+  as.numeric(forecast_bc$mean),
+  col = "blue",
+  lwd = 2
+)
+
+legend(
+  "topleft",
+  legend = c("Aktual", "Forecast Box-Cox"),
+  col = c("black", "blue"),
+  lty = 1,
+  lwd = 2
+)
+
+# Grafik Logaritma 
+
+plot(
+  as.numeric(test),
+  type = "l",
+  col = "black",
+  lwd = 2,
+  ylim = range(
+    c(test, forecast_log$mean),
+    na.rm = TRUE
+  ),
+  main = "Forecast ARIMA dengan Transformasi Logaritma",
+  xlab = "Periode Testing",
+  ylab = "Harga Ayam (Rp)"
+)
+
+lines(
+  as.numeric(forecast_log$mean),
+  col = "blue",
+  lwd = 2
+)
+
+legend(
+  "topleft",
+  legend = c("Aktual", "Forecast Logaritma"),
+  col = c("black", "blue"),
+  lty = 1,
+  lwd = 2
+)
+```
+
+# Evaluasi Akurasi 
+```{r}
+akurasi_bc <- accuracy(
+  forecast_bc,
+  test
+)
+
+akurasi_log <- accuracy(
+  forecast_log,
+  test
+)
+
+akurasi_bc
+akurasi_log
+```
+```{r}
+perbandingan_mape <- data.frame(
+  Transformasi = c(
+    "Box-Cox lambda -0.65",
+    "Logaritma lambda 0"
+  ),
+
+  RMSE = c(
+    akurasi_bc["Test set", "RMSE"],
+    akurasi_log["Test set", "RMSE"]
+  ),
+
+  MAE = c(
+    akurasi_bc["Test set", "MAE"],
+    akurasi_log["Test set", "MAE"]
+  ),
+
+  MAPE = c(
+    akurasi_bc["Test set", "MAPE"],
+    akurasi_log["Test set", "MAPE"]
+  )
+)
+
+perbandingan_mape
+```
+
+Berdasarkan hasil perbandingan performa model, transformasi logaritma (λ = 0) menghasilkan nilai kesalahan yang lebih kecil dibandingkan Box-Cox (λ = −0,65). Model dengan transformasi logaritma memiliki RMSE = 4.312,707, MAE = 3.696,017, dan MAPE = 12,03%, sedangkan Box-Cox memiliki RMSE = 26.297,534, MAE = 23.522,105, dan MAPE = 73,26%. Karena nilai RMSE, MAE, dan MAPE yang lebih kecil menunjukkan kesalahan prediksi yang lebih rendah, maka transformasi logaritma memberikan performa peramalan yang lebih baik dibandingkan transformasi Box-Cox pada data tersebut. Dalam artian,, bahwa model terpilih adalah ARIMA(1,1,1) dengan transformasi logaritma (λ = 0)
+
+
+
+
+
+
+
